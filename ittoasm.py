@@ -28,6 +28,11 @@ def cals(a, b):
 	t = int(19200 / t)
 	return s, t
 
+def calp(a):
+	if a < 22: return 0xf0
+	elif a < 43: return 0xff
+	return 0xf
+
 fin = nsp.fi
 fou = nsp.fo
 red = nsp.red
@@ -61,6 +66,10 @@ if msglen != -1:
 
 print "{} instruments, {} samples, {} patterns and {} patterns long.".format(inum, snum, pnum, onum - 1)
 print "[Initial] Speed {} | Tempo {} -> Speed {} | Tempo {} (asm)".format(spe, tem, spea, tema)
+
+fin.seek(0x40, 0)
+panl = []
+for i in range(64): panl.append(calp(ord(fin.read(1))))
 
 fin.seek(0xc0, 0)
 ords = ""
@@ -157,10 +166,14 @@ def tx_vibr(a):
 	if red: return "\tvibrato ${:x}, ${:x}, ${:x}\n".format((a >> 8) & 255, (a >> 4) & 15, a & 15)
 	else: return "\tvibrato ${:x}, ${:x}\n".format((a >> 8) & 255, a & 255)
 	
-def tx_duty(a):
+def tx_duty(ch,a):
+	if ch > 2: return "" # Wave channel and noise channel don't have duty cycle
 	if red: return "\tduty ${:x}\n".format(a)
 	else: return "\tdutycycle ${:x}\n".format(a)
 	
+def tx_pan(a):
+	if red: return "" # stereo panning is not recommended in Gen 1
+	else: return "\tstereopanning ${:x}\n".format(a)
 
 for pat in ordl:
 	for k in patf.keys(): patf[k] = True
@@ -215,18 +228,21 @@ for pat in ordl:
 				ninn = insl[nins].ntty
 				ninv = insl[nins].vibr
 				if ch not in cins.keys():
-					instxti = "\ttempo ${:x}\n{}{}".format(tema, tx_duty(nind), tx_ntty(ch,ninn))
+					if ch == 1: instxti = "\ttempo ${:x}\n{}{}".format(tema, tx_duty(ch,nind), tx_ntty(ch,ninn))
+					else: instxti = "{}{}".format(tx_duty(ch,nind), tx_ntty(ch,ninn)) # tempo command is global
+					if ch == 4 and not red: instxti = "{}\ttogglenoise ${}\n".format(instxti,ninn&15)
 					if ninv != 0: instxti = instxti + tx_vibr(ninv)
+					instxti = instxti + tx_pan(panl[ch-1])
 					chdat[ch] = chdat[ch] + instxti
 					instxt[ch] = ""
 				elif nins != cins[ch]:
-					if nind != insl[cins[ch]].duty: instxt[ch] = instxt[ch] + tx_duty(nind)
+					if nind != insl[cins[ch]].duty: instxt[ch] = instxt[ch] + tx_duty(ch,nind)
 					if ninn != insl[cins[ch]].ntty: instxt[ch] = instxt[ch] + tx_inte(ch,ninn)
 					if ninv != insl[cins[ch]].vibr: instxt[ch] = instxt[ch] + tx_vibr(ninv)
 				cins[ch] = nins
 				
 				if nlc[ch] != 0:
-					chdat[ch] = chdat[ch] + efftxt[ch] + instxt[ch] + nttxt[ch] + tx_nlc(ch)
+					chdat[ch] = chdat[ch] + efftxt[ch] + nttxt[ch] + tx_nlc(ch) + instxt[ch]
 					instxt[ch] = ""
 					efftxt[ch] = ""
 					if patf[ch]: chdat[ch] = chdat[ch] + "; Pat {} Row {}\n".format(pat, crow)
@@ -236,16 +252,21 @@ for pat in ordl:
 					nlc[ch] = 0
 			if mv[ch] & 4: fin.seek(1, 1)
 			if mv[ch] & 8:
+				efftxt[ch] = ""
 				eff = ord(fin.read(1))
 				effv = ord(fin.read(1))
-				if eff == 1:
+				if eff == 20: # Txx
+					if effv < 0x10: effv = tema - (effv & 0xf) * (spea/2 - 1)
+					elif effv < 0x20: effv = tema + (effv & 0xf) * (spea/2 - 1)
+					spea, tema = cals(spea/2, effv)
+					efftxt[ch] = efftxt[ch] + "\ttempo ${:x}\n".format(tema)
+				if eff == 1:  # Axx
 					spea, tema = cals(effv, tema)
-					efftxt[ch] = tx_ntty(ch, insl[cins[ch]].ntty)
-				if eff == 20:
-					spea, tema = cals(spea, effv)
-					efftxt[ch] = "\ttempo ${:x}\n".format(tema)
+					efftxt[ch] = efftxt[ch] + tx_ntty(ch, insl[cins[ch]].ntty)
+				if eff == 19 and effv / 0x10 == 8: # S8x
+					efftxt[ch] = efftxt[ch] + tx_pan(calp((effv&0xf)*63/15))
 			if mv[ch] & 32 and nlc[ch] != 0:
-				chdat[ch] = chdat[ch] + efftxt[ch] + instxt[ch] + nttxt[ch] + tx_nlc(ch)
+				chdat[ch] = chdat[ch] + efftxt[ch] + nttxt[ch] + tx_nlc(ch) + instxt[ch]
 				instxt[ch] = ""
 				efftxt[ch] = ""
 				if patf[ch]: chdat[ch] = chdat[ch] + "; Pat {} Row {}\n".format(pat, crow)
@@ -256,7 +277,7 @@ for pat in ordl:
 
 for k in chdat.keys():
 	chdat[k] = chdat[k] + nttxt[k] + tx_nlc(k)
-	fou.write("Ch{}:\n{}endchannel\n\n".format(k, chdat[k]))
+	fou.write("Ch{}:\n{}\tendchannel\n\n".format(k, chdat[k]))
 
 fin.close()
 fou.close()
