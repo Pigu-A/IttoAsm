@@ -3,7 +3,7 @@ import argparse, math
 parser = argparse.ArgumentParser(description='Converts .it module to pokecrystal asm')
 parser.add_argument('-red', action='store_const', const=True, default=False, help='produces pokered asm instead')
 parser.add_argument('fi', metavar='I', type=argparse.FileType('rb'), help='Input file name')
-parser.add_argument('fo', metavar='O', type=argparse.FileType('wb'), help='Output file name')
+parser.add_argument('fo', metavar='O', type=argparse.FileType('w'), help='Output file name')
 nsp = parser.parse_args()
 
 class Inst:
@@ -26,7 +26,7 @@ def cals(a, b):
 		s = int(s / d) * 2
 		t = int(t / d)
 	t = int(19200 / t)
-	return s, t
+	return int(s), int(t)
 
 def calp(a):
 	if a < 22: return 0xf0
@@ -36,9 +36,9 @@ def calp(a):
 fin = nsp.fi
 fou = nsp.fo
 red = nsp.red
-if fin.read(4) != "IMPM": raise Exception("Invalid magic number. This is not .it module file!")
+if fin.read(4) != b"IMPM": raise Exception("Invalid magic number. This is not .it module file!")
 
-name = fin.read(26).strip(chr(0))
+name = fin.read(26).strip(b'\x00')
 if name == "": name = fin.name
 tpb = ord(fin.read(1))
 tpm = ord(fin.read(1))
@@ -56,16 +56,16 @@ fin.seek(0x36, 0)
 msglen = le16(fin) - 1
 fin.seek(le32(fin), 0)
 
-print "Converting {} into pokecrystal asm...".format(name)
+print("Converting {} into pokecrystal asm...".format(name))
 
 if msglen != -1:
-	msg = fin.read(msglen).replace(chr(0xd), '\n')
-	print "===================="
-	print msg
-	print "===================="
+	msg = fin.read(msglen).replace(b'\x0d', b'\n')
+	print("====================")
+	print(msg)
+	print("====================")
 
-print "{} instruments, {} samples, {} patterns and {} patterns long.".format(inum, snum, pnum, onum - 1)
-print "[Initial] Speed {} | Tempo {} -> Speed {} | Tempo {} (asm)".format(spe, tem, spea, tema)
+print("{} instruments, {} samples, {} patterns and {} patterns long.".format(inum, snum, pnum, onum - 1))
+print("[Initial] Speed {} | Tempo {} -> Speed {} | Tempo {} (asm)".format(spe, tem, spea, tema))
 
 fin.seek(0x40, 0)
 panl = []
@@ -81,22 +81,20 @@ for d in range(onum - 1):
 	if cpat != 254:
 		ords = ords + str(cpat) + " "
 		ordl.append(cpat)
-print "Pattern order: {}".format(ords)
+print("Pattern order: {}".format(ords))
 
 fin.seek(0xc0 + onum, 0)
 for d in range(inum): inspl.append(le32(fin))
 fin.seek(snum * 4, 1)
 for d in range(pnum): patpl.append(le32(fin))
 
-print ""
-print "## Instruments ##"
-print ""
+print("\n## Instruments ##\n")
 
 insl = []
 c = 0
 for insp in inspl:
 	fin.seek(insp + 0x20, 0)
-	inam = fin.read(26).strip(chr(0)).split('|')
+	inam = fin.read(26).strip(b'\x00').split(b'|')
 	d = 2
 	n = 0xa7
 	v = 0
@@ -105,18 +103,17 @@ for insp in inspl:
 		d = (dn >> 8) & 3
 		n = dn & 255
 	except ValueError:
-		print "Invalid note type for instrument #{}, defaulting duty to 2 and notetype to a7...".format(c)
+		print("Invalid note type for instrument #{}, defaulting duty to 2 and notetype to a7...".format(c))
 	if(len(inam) > 1):
 		try:
 			v = int(inam[1], base=16) & 0xffff
 		except ValueError:
-			print "Invalid vibrato for instrument #{}, defaulting to 0...".format(c)
+			print("Invalid vibrato for instrument #{}, defaulting to 0...".format(c))
 	insl.append(Inst(d,n,v))
-	print "#{:<3}: Duty {:x}, Note Type {:02x}, Vibrato {:04x}".format(c, d, n, v)
+	print("#{:<3}: Duty {:x}, Note Type {:02x}, Vibrato {:04x}".format(c, d, n, v))
 	c = c + 1
 	
-print ""
-print "Converting pattern data..."
+print("\nConverting pattern data...")
 
 chdat = {}
 ntLUT = ['C_', 'C#', 'D_', 'D#', 'E_', 'F_', 'F#', 'G_', 'G#', 'A_', 'A#', 'B_']
@@ -277,8 +274,8 @@ for pat in ordl:
 
 for k in chdat.keys():
 	chdat[k] = chdat[k] + nttxt[k] + tx_nlc(k)
-	fou.write("Ch{}:\n{}\tendchannel\n\n".format(k, chdat[k]))
+	fou.write("Ch{}:\n{}\tendchannel\n".format(k, chdat[k]))
 
 fin.close()
 fou.close()
-print "Completed!"
+print("Completed!")
